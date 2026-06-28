@@ -91,48 +91,62 @@ async def initialize_camera(config: TrafficAnalysisConfig):
 # 6. BÖLÜM: NUMPY MATRİSİNE ÇEVİRME VE OPENCV İŞLEMLERİ
 # ======================================================
 @app.post("/process-image/", status_code=status.HTTP_200_OK)
-async def process_image(file: UploadFile = File(...)):
+async def process_image(
+        file: UploadFile = File(...),
+        low_threshold: int = 100,  # Dinamik parametre 1
+        high_threshold: int = 200  # Dinamik parametre 2
+):
     """
-    Kameradan gelen görseli alan, doğrplayan, OpenCV piksel matrisine çevirip
-    kenar tespiti (Canny Edge) yaptıktan sonra yeni resmi tarayıcıya dönen endpoint.
+    Gelişmiş güvenlik filtreli, dinamik eşik değer destekli ve
+    bellek korumalı OpenCV görüntü işleme endpoint'i.
     """
-
-    # 1. KORUMA KALKANI: Gelen dosya gerçekten bir resim mi?
-    # Kullanıcı kazaen bir pdf veya txt dosyası yüklerse sistemi yormadan kapıda eliyoruz.
+    # 1. KORUMA KALKANI: Dosya tipi kontrolü
     if not file.content_type.startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Geçersiz dosya! Lütfen sadece JPG veya PNG formatında bir trafik görseli yükleyin."
+            detail="Geçersiz dosya tipi! Lütfen sadece görsel yükleyin."
+        )
+
+    # 2. KORUMA KALKANI: Dosya boyutu kontrolü (Maksimum 5 MB)
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 Megabayt
+    # Dosyanın boyutunu okumak için imleci sona götürüp boyutu alıyoruz
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)  # İmleci tekrar başa alıyoruz ki okuma hatası olmasın
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_PAYLOAD_TOO_LARGE,
+            detail="Dosya boyutu çok büyük! Maksimum sınır 5 MB'tır."
         )
 
     try:
-        # 2. VERİ OKUMA: İnternet kablosundan gelen ham binary (0 ve 1) veriyi okuyoruz
+        # 3. VERİ OKUMA VE DÖNÜŞÜM
         image_bytes = await file.read()
-
-        # 3. MATRİS SİHRİ:
-        # Ham byte yığınını, bilgisayarın anlayacağı 1 boyutlu bir NumPy sayı dizisine çeviriyoruz
         nparr = np.frombuffer(image_bytes, np.uint8)
-
-        # OpenCV devreye giriyor: "Bu sayı dizisini al ve renkli bir görsel matrisine (BGR) dönüştür"
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-        # 4. OPENCV İLE GÖRÜNTÜ İŞLEME (Gürültü Temizliği):
+        # 4. KORUMA KALKANI: Bozuk/Kırık görsel kontrolü
+        if img is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Görsel kodu çözülemedi. Dosya bozuk veya okunamaz durumda."
+            )
+
+        # 5. DİNAMİK OPENCV İŞLEME
         gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Canny Edge algoritması ile görseldeki arabaların ve tabelaların geometrik sınır çizgilerini buluyoruz
-        # 100 ve 200 değerleri eşik değerleridir; çizgilerin ne kadar keskin olacağını belirler
-        edges = cv2.Canny(gray_img, 100, 200)
+        # Kullanıcının URL'den gönderdiği low ve high threshold değerlerini kullanıyoruz
+        edges = cv2.Canny(gray_img, low_threshold, high_threshold)
 
-        # 5. DIŞ DÜNYAYA RESİM FIRLATMA:
-        # Hafızadaki işlenmiş matrisi (edges) tekrar internetten taşınabilir PNG formatına paketliyoruz
+        # 6. TRANSFER VE ÇIKTI
         _, encoded_img = cv2.imencode(".png", edges)
-
-        # Bytes verisini FastAPI'nin tarayıcıya "canlı resim" olarak basabilmesi için bir akışa sarıyoruz
         return StreamingResponse(io.BytesIO(encoded_img.tobytes()), media_type="image/png")
 
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
-        # Kodun içinde beklenmedik bir matematiksel hata olursa sunucunun çökmesini engelle diyoruz
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Görsel işlenirken sunucu içi hata oluştu: {str(e)}"
+            detail=f"Sistem hatası: {str(e)}"
         )
