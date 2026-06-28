@@ -93,53 +93,62 @@ async def initialize_camera(config: TrafficAnalysisConfig):
 @app.post("/process-image/", status_code=status.HTTP_200_OK)
 async def process_image(
         file: UploadFile = File(...),
-        low_threshold: int = 100,  # Dinamik parametre 1
-        high_threshold: int = 200  # Dinamik parametre 2
+        low_threshold: int = 100,
+        high_threshold: int = 200
 ):
     """
     Gelişmiş güvenlik filtreli, dinamik eşik değer destekli ve
-    bellek korumalı OpenCV görüntü işleme endpoint'i.
+    donanım maliyetlerini düşüren akıllı resize optimizasyonlu OpenCV görüntü işleme endpoint'i.
     """
-    # 1. KORUMA KALKANI: Dosya tipi kontrolü
+    # 1. DOSYA TİPİ DOĞRULAMASI: Sadece görseller
     if not file.content_type.startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Geçersiz dosya tipi! Lütfen sadece görsel yükleyin."
+            detail="Geçersiz dosya tipi! Lütfen sadece görsel formatında bir dosya yükleyin."
         )
 
-    # 2. KORUMA KALKANI: Dosya boyutu kontrolü (Maksimum 5 MB)
+    # 2. BOYUT SINIRLANDIRMA: Maksimum 5 MB, RAM ve sunucu güvenliği için
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 Megabayt
-    # Dosyanın boyutunu okumak için imleci sona götürüp boyutu alıyoruz
-    file.file.seek(0, 2)
-    file_size = file.file.tell()
-    file.file.seek(0)  # İmleci tekrar başa alıyoruz ki okuma hatası olmasın
+    file.file.seek(0, 2)  # İmleci dosyanın sonuna götür
+    file_size = file.file.tell()  # Toplam boyutu oku
+    file.file.seek(0)  # İmleci tekrar başa al (Okuma hatasını önlemek için kritik)
 
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_PAYLOAD_TOO_LARGE,
-            detail="Dosya boyutu çok büyük! Maksimum sınır 5 MB'tır."
+            detail="Dosya boyutu çok büyük! Sunucu güvenliği için maksimum sınır 5 MB'dır."
         )
 
     try:
-        # 3. VERİ OKUMA VE DÖNÜŞÜM
+        # 3. VERİ OKUMA: Ham byte yığınını okuma ve NumPy matrisine dönüştürme
         image_bytes = await file.read()
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-        # 4. KORUMA KALKANI: Bozuk/Kırık görsel kontrolü
+        # 4. BOZUK/KIRIK GÖRSEL KONTROLÜ
         if img is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Görsel kodu çözülemedi. Dosya bozuk veya okunamaz durumda."
             )
 
-        # 5. DİNAMİK OPENCV İŞLEME
+        # 5. PERFORMANS OPTİMİZASYONU: Downscaling
+        # Devasa çözünürlüklerde (4K/2K) piksel yoğunluğunu azaltarak işlem hızını 3-4 kat artırıyoruz.
+        h, w = img.shape[:2]
+        max_width = 1280
+        if w > max_width:
+            ratio = max_width / float(w)
+            new_dimensions = (max_width, int(h * ratio))
+            # INTER_AREA: Küçültme işlemlerinde piksellerin bozulmasını önleyen en ideal interpolasyondur
+            img = cv2.resize(img, new_dimensions, interpolation=cv2.INTER_AREA)
+
+        # 6. OPENCV İLE GÖRÜNTÜ İŞLEME
         gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Kullanıcının URL'den gönderdiği low ve high threshold değerlerini kullanıyoruz
+        # Kullanıcının URL'den (Query) gönderdiği dinamik threshold değerleri uygulanıyor
         edges = cv2.Canny(gray_img, low_threshold, high_threshold)
 
-        # 6. TRANSFER VE ÇIKTI
+        # 7. TRANSFER VE CANLI AKIŞ: İşlenen matrisi bellek şişirmeden PNG olarak fırlatma
         _, encoded_img = cv2.imencode(".png", edges)
         return StreamingResponse(io.BytesIO(encoded_img.tobytes()), media_type="image/png")
 
@@ -148,5 +157,5 @@ async def process_image(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sistem hatası: {str(e)}"
+            detail=f"Görsel işlenirken sunucu içi bir mimari hata oluştu: {str(e)}"
         )
