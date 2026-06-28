@@ -1,0 +1,66 @@
+# ==========================================
+# 1. PYTHON VE SANAL ORTAM (VENV) AYARLARI
+# ==========================================
+# Geliştirme ortamındaki izole odayı GitHub'a göndermiyoruz
+.venv/
+venv/
+ENV/
+env/
+cloned_venv/
+Build/
+Develop/
+
+# Python'ın çalışma esnasında ürettiği geçici derleme dosyaları
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# 2. YAPAY ZEKA VE DERİN ÖĞRENME AYARLARI (AI / ML)
+# ==========================================
+# Devasa boyutlu YOLO ağırlık dosyaları (.pt, .pth, .onnx, .engine)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.weights
+
+# Eğitim esnasında otomatik oluşan veri setleri ve log klasörleri
+datasets/
+runs/
+.chunks/
+
+# ==========================================
+# 3. KOD EDİTÖRLERİ VE SISTEM DOSYALARI
+# ==========================================
+# PyCharm özel ayar klasörü
+.idea/
+
+# VS Code özel ayar klasörü
+.vscode/
+*.code-workspace
+
+# Windows ve macOS sistemlerinin otomatik ürettiği gizli dosyalar
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ==========================================
+# 4. GÜVENLİK VE GİZLİ VERİLER (ENV VARS)
+# ==========================================
+# İleride ekleyebileceğin veritabanı şifreleri veya API anahtarları
+.env
+.env.local
+.env.*.local
+*.podspec
+
+# ==========================================
+# 5. DOCKER VE GEÇİCİ DOSYALAR (GELECEK SÜRÜMLER)
+# ==========================================
+# Docker katmanlarında oluşabilecek geçici veriler
+.dockerignore
+*.log
+logs/
+*.swp
+*.bak
