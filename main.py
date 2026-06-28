@@ -86,3 +86,53 @@ async def initialize_camera(config: TrafficAnalysisConfig):
         "message": f"TraffiCam akıllı kamera motoru {config.model_type} modeli ile başarıyla senkronize edildi.",
         "applied_configuration": config
     }
+
+# ======================================================
+# 6. BÖLÜM: NUMPY MATRİSİNE ÇEVİRME VE OPENCV İŞLEMLERİ
+# ======================================================
+@app.post("/process-image/", status_code=status.HTTP_200_OK)
+async def process_image(file: UploadFile = File(...)):
+    """
+    Kameradan gelen görseli alan, doğrplayan, OpenCV piksel matrisine çevirip
+    kenar tespiti (Canny Edge) yaptıktan sonra yeni resmi tarayıcıya dönen endpoint.
+    """
+
+    # 1. KORUMA KALKANI: Gelen dosya gerçekten bir resim mi?
+    # Kullanıcı kazaen bir pdf veya txt dosyası yüklerse sistemi yormadan kapıda eliyoruz.
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Geçersiz dosya! Lütfen sadece JPG veya PNG formatında bir trafik görseli yükleyin."
+        )
+
+    try:
+        # 2. VERİ OKUMA: İnternet kablosundan gelen ham binary (0 ve 1) veriyi okuyoruz
+        image_bytes = await file.read()
+
+        # 3. MATRİS SİHRİ:
+        # Ham byte yığınını, bilgisayarın anlayacağı 1 boyutlu bir NumPy sayı dizisine çeviriyoruz
+        nparr = np.frombuffer(image_bytes, np.uint8)
+
+        # OpenCV devreye giriyor: "Bu sayı dizisini al ve renkli bir görsel matrisine (BGR) dönüştür"
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        # 4. OPENCV İLE GÖRÜNTÜ İŞLEME (Gürültü Temizliği):
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Canny Edge algoritması ile görseldeki arabaların ve tabelaların geometrik sınır çizgilerini buluyoruz
+        # 100 ve 200 değerleri eşik değerleridir; çizgilerin ne kadar keskin olacağını belirler
+        edges = cv2.Canny(gray_img, 100, 200)
+
+        # 5. DIŞ DÜNYAYA RESİM FIRLATMA:
+        # Hafızadaki işlenmiş matrisi (edges) tekrar internetten taşınabilir PNG formatına paketliyoruz
+        _, encoded_img = cv2.imencode(".png", edges)
+
+        # Bytes verisini FastAPI'nin tarayıcıya "canlı resim" olarak basabilmesi için bir akışa sarıyoruz
+        return StreamingResponse(io.BytesIO(encoded_img.tobytes()), media_type="image/png")
+
+    except Exception as e:
+        # Kodun içinde beklenmedik bir matematiksel hata olursa sunucunun çökmesini engelle diyoruz
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Görsel işlenirken sunucu içi hata oluştu: {str(e)}"
+        )
